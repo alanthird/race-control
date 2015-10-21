@@ -5,7 +5,10 @@ import (
 )
 
 func TestSerial(t *testing.T) {
-	p := initComms()
+	p := InitComms()
 
-	read(p)
+	_, err := SendReceive(p, []byte{0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x7F})
+	if err != nil {
+		t.Error("SendReceive failed")
+	}
 }

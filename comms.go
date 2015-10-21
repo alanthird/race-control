@@ -1,6 +1,7 @@
 package comms
 
 import (
+	"errors"
 	"log"
 
 	"github.com/tarm/serial"
@@ -28,7 +29,6 @@ var crc8Lookup = [256]uint8{
 	0xFA, 0xFD, 0xF4, 0xF3,
 }
 
-
 func checksum(input []byte) byte {
 	var crc8 uint8 = 0
 
@@ -39,21 +39,9 @@ func checksum(input []byte) byte {
 	return crc8
 }
 
-func initComms() (s *serial.Port) {
+func InitComms() (s *serial.Port) {
 	c := &serial.Config{Name: "/dev/cu.usbserial-AH01NGJJ", Baud: 19200}
 	s, err := serial.OpenPort(c)
-	if err != nil {
-		log.Fatal(err)
-	}
-	
-	message := []byte{0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x7F}
-	
-	_, err = s.Write(message)
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	_, err = s.Write([]byte{checksum(message)})
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -63,21 +51,52 @@ func initComms() (s *serial.Port) {
 	return
 }
 
-func read(s *serial.Port) []byte {
+func read(s *serial.Port) ([]byte, error) {
 	buf := make([]byte, 15)
-	
-	for numRead := 0 ; numRead < 15 ; {
+
+	for numRead := 0; numRead < 15; {
 		n, err := s.Read(buf[numRead:])
 		if err != nil {
-			log.Fatal(err)
+			log.Fatal("COMMS, read: %s", err)
 		}
 
 		numRead = numRead + n
 	}
 
 	if checksum(buf[:14]) != buf[14] {
-		log.Fatal("Checksum doesn't match", checksum(buf[:14]), buf)
+		log.Printf("COMMS, read: Checksum doesn't match. Calculated: %x, received: %x", checksum(buf[:14]), buf[14])
+		return nil, errors.New("Non-matching checksum")
 	}
-	
-	return buf[:14]
+
+	return buf[:14], nil
+}
+
+func write(s *serial.Port, msg []byte) {
+	_, err := s.Write(msg)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	_, err = s.Write([]byte{checksum(msg)})
+	if err != nil {
+		log.Fatal(err)
+	}
+}
+
+func SendReceive(s *serial.Port, msg []byte) ([]byte, error) {
+	// Prepend a "last message good" marker
+	msg = append([]byte{0xFF}, msg...)
+
+	for i := 0; i < 3; i++ {
+		write(s, msg)
+
+		data, err := read(s)
+		if err != nil {
+			// Change "good" to "bad" and resend
+			msg[0] = 0x7F
+		} else {
+			return data, nil
+		}
+	}
+	return nil, errors.New("Failed to read packet")
 }
